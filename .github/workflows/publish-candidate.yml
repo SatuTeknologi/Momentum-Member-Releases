@@ -1,0 +1,41 @@
+name: Publish verified member candidate
+on:
+  push:
+    branches: [staging/installer-1.2.0-rc.1]
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assemble and verify installer
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib,json,pathlib
+          p=pathlib.Path('payload');name='MomentumEXE-Member-1.2.0-rc.1-windows-x64-Setup.exe'
+          manifest=json.loads((p/'release-manifest.json').read_text())
+          assert manifest['source_commit']=='e27b0f38da5a904e326a904c1f69c77002bb810e'
+          assert manifest['version']=='1.2.0-rc.1' and manifest['windows_install_smoke'] is True
+          assert manifest['installer']['sha256']=='bf394323f320dcba547c03aaf54f854bda77a7298969a2e8f37a1d06b99ddbcf'
+          assert manifest['installer']['size']==262053390
+          assert {f.name for f in p.iterdir()}=={'installer.part00','installer.part01','installer.part02','installer.part03','release-manifest.json','SHA256SUMS.txt','INSTALL.md'}
+          with (p/name).open('wb') as out:
+              for part in sorted(p.glob('installer.part*')):out.write(part.read_bytes())
+          for line in (p/'SHA256SUMS.txt').read_text().splitlines():
+              expected,filename=line.split('  ',1)
+              assert filename in {name,'release-manifest.json','INSTALL.md'}
+              assert hashlib.sha256((p/filename).read_bytes()).hexdigest()==expected
+          assert (p/name).stat().st_size==manifest['installer']['size']
+          PY
+      - name: Upload verified assets and publish candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload v1.2.0-rc.1 --repo "$GITHUB_REPOSITORY" payload/MomentumEXE-Member-1.2.0-rc.1-windows-x64-Setup.exe payload/release-manifest.json payload/SHA256SUMS.txt payload/INSTALL.md --clobber
+          gh release edit v1.2.0-rc.1 --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
+      - name: Remove temporary binary transport branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/staging/installer-1.2.0-rc.1"
