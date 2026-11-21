@@ -1,0 +1,56 @@
+name: Publish verified risk-period candidate
+on:
+  push:
+    branches: [staging/installer-1.2.0-rc.3]
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download and verify installer-only Windows artifact
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib,json,pathlib,shutil,urllib.request,urllib.parse,zipfile
+          data=json.loads(pathlib.Path('publication/installer.json').read_text())
+          url=data['artifact_url'];parsed=urllib.parse.urlsplit(url)
+          assert parsed.scheme=='https' and parsed.hostname.endswith('.blob.core.windows.net')
+          print('::add-mask::'+url)
+          with urllib.request.urlopen(url,timeout=120) as src,open('/tmp/public-installer.zip','wb') as out:shutil.copyfileobj(src,out)
+          name='MomentumEXE-Member-1.2.0-rc.3-windows-x64-Setup.exe'
+          allowed={name,'release-manifest.json','SHA256SUMS.txt','INSTALL.md'}
+          expected={'output/'+n for n in allowed}|{'windows-smoke.json','resolved-requirements.txt'}
+          out=pathlib.Path('verified');out.mkdir()
+          with zipfile.ZipFile('/tmp/public-installer.zip') as archive:
+              files=[n for n in archive.namelist() if not n.endswith('/')]
+              assert len(files)==len(set(files)) and set(files)==expected,'Unexpected files in public artifact'
+              for filename in allowed:(out/filename).write_bytes(archive.read('output/'+filename))
+              smoke=json.loads(archive.read('windows-smoke.json'))
+          assert all(smoke[k] is True for k in ('blocked_unknown','install','upgrade','journal_preserved'))
+          assert all(smoke['frozen_smoke'][k] is True for k in ('frozen','ui_ready','browser_bundled','browser_launch','webview_backend','wib_timezone'))
+          manifest=json.loads((out/'release-manifest.json').read_text())
+          assert manifest['source_commit']=='865cd6745b258323284ab3b63e707af0e3d622ae'
+          assert manifest['version']=='1.2.0-rc.3' and manifest['windows_install_smoke'] is True
+          assert manifest['live_broker_acceptance'] is False and manifest['installer']['name']==name
+          assert manifest['installer']['sha256']==data['installer_sha256']
+          lines=(out/'SHA256SUMS.txt').read_text().splitlines()
+          assert {line.split('  ',1)[1] for line in lines}==allowed-{'SHA256SUMS.txt'}
+          for line in lines:
+              expected_hash,filename=line.split('  ',1)
+              assert hashlib.sha256((out/filename).read_bytes()).hexdigest()==expected_hash
+          assert hashlib.sha256((out/name).read_bytes()).hexdigest()==data['installer_sha256']
+          assert (out/name).stat().st_size==manifest['installer']['size']
+          print('Installer-only artifact, exact source, hashes and Windows smoke verified.')
+          PY
+      - name: Upload verified assets and publish candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload v1.2.0-rc.3 --repo "$GITHUB_REPOSITORY" verified/MomentumEXE-Member-1.2.0-rc.3-windows-x64-Setup.exe verified/release-manifest.json verified/SHA256SUMS.txt verified/INSTALL.md --clobber
+          gh release edit v1.2.0-rc.3 --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
+      - name: Remove temporary publication branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/staging/installer-1.2.0-rc.3"
