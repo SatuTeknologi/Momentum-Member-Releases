@@ -31,7 +31,7 @@ jobs:
           assert all(smoke[k] is True for k in ('blocked_unknown','install','upgrade','journal_preserved'))
           assert all(smoke['frozen_smoke'][k] is True for k in ('frozen','ui_ready','browser_bundled','browser_launch','webview_backend','wib_timezone'))
           manifest=json.loads((out/'release-manifest.json').read_text())
-          assert manifest['source_commit']=='865cd6745b258323284ab3b63e707af0e3d622ae'
+          assert manifest['source_commit']=='7b07bee052f80db2726ffc8b1018be8e4e139fa4'
           assert manifest['version']=='1.2.0-rc.3' and manifest['windows_install_smoke'] is True
           assert manifest['live_broker_acceptance'] is False and manifest['installer']['name']==name
           assert manifest['installer']['sha256']==data['installer_sha256']
